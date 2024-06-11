@@ -192,7 +192,7 @@ def delete_book():
     save_books(books)
     if len(books) == initial_length:
         return jsonify(errorMessage=f"Error: no such Book with id {book_id}"), 404
-    return jsonify(result=f"Book with id {book_id} successfully deleted"), 200
+    return jsonify(result=len(books)), 200
 
 
 
