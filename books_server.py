@@ -27,10 +27,10 @@ class MillisecondFormatter(logging.Formatter):
             t = time.strftime("%Y-%m-%d %H:%M:%S", ct)
             return "%s.%03d" % (t, record.msecs)
 
+
 request_logger = logging.getLogger('request-logger')
 request_logger.setLevel(logging.INFO)
 request_file_handler = logging.FileHandler('logs/requests.log')
-request_file_handler.setLevel(logging.INFO)
 request_console_handler = logging.StreamHandler()
 request_formatter = MillisecondFormatter('%(asctime)s %(levelname)s: %(message)s | request #%(request_number)s',
                                          datefmt="%d-%m-%Y %H:%M:%S.{msecs}")
@@ -42,7 +42,6 @@ request_logger.addHandler(request_console_handler)
 books_logger = logging.getLogger('books-logger')
 books_logger.setLevel(logging.INFO)
 books_file_handler = logging.FileHandler('logs/books.log')
-books_file_handler.setLevel(logging.INFO)
 books_formatter = MillisecondFormatter('%(asctime)s %(levelname)s: %(message)s | request #%(request_number)s',
                                        datefmt="%d-%m-%Y %H:%M:%S.{msecs}")
 books_file_handler.setFormatter(books_formatter)
@@ -50,6 +49,7 @@ books_logger.addHandler(books_file_handler)
 
 
 request_counter = 0
+
 
 @app.before_request
 def before_request():
@@ -155,15 +155,20 @@ def create_book():
 
     # Check if a book with the same title already exists
     if any(book['title'].lower() == title.lower() for book in books):
+        books_logger.error(f"Error: Book with the title [{title}] already exists in the system", extra={'request_number': g.request_number})
         return jsonify(errorMessage=f"Error: Book with the title [{title}] already exists in the system"), 409
+
 
     # Validate the year range
     if not (1940 <= year <= 2100):
+        books_logger.error(f"Error: Can't create new Book that its year [{year}]"
+                                    f" is not in the accepted range [1940 -> 2100]", extra={'request_number': g.request_number})
         return jsonify(errorMessage=f"Error: Can't create new Book that its year [{year}]"
                                     f" is not in the accepted range [1940 -> 2100]"), 409
 
     # Validate the price
     if price < 0:
+        books_logger.error("Error: Can't create new Book with negative price",extra={'request_number': g.request_number})
         return jsonify(errorMessage="Error: Can't create new Book with negative price"), 409
 
     # Create a new book entry
@@ -184,12 +189,14 @@ def create_book():
 
     return jsonify(result=book_id), 200
 
+
 @app.route('/books/total', methods=['GET'])
 def get_total_books():
     """Get the total number of books in the inventory, with optional filters."""
     global books
     filtered_books = filter_books(request.args)
     if isinstance(filtered_books, str):  # Check if there was an error
+
         return jsonify(errorMessage=filtered_books), 400
     books_logger.info(f"Total Books found for requested filters is {len(filtered_books)}",
                       extra={'request_number': g.request_number})
@@ -201,6 +208,7 @@ def get_books():
     global books
     filtered_books = filter_books(request.args)
     if isinstance(filtered_books, str):  # Check if there was an error
+        books_logger.error(filtered_books, extra={'request_number': g.request_number})
         return jsonify(errorMessage=filtered_books), 400
     sorted_books = sorted(filtered_books, key=lambda x: x['title'].lower())
     books_logger.info(f"Total Books found for requested filters is "
@@ -214,6 +222,7 @@ def get_book():
     book_id = int(request.args.get('id'))
     book = next((book for book in books if book['id'] == book_id), None)
     if book is None:
+        books_logger.error(f"Error: no such Book with id {book_id}", extra={'request_number': g.request_number})
         return jsonify(errorMessage=f"Error: no such Book with id {book_id}"), 404
 
     # Use OrderedDict to maintain the order of fields in the response
@@ -237,19 +246,21 @@ def update_book_price():
 
     book = next((book for book in books if book['id'] == book_id), None)
     if book is None:
+        books_logger.error(f"Error: no such Book with id {book_id}", extra={'request_number': g.request_number})
         return jsonify(errorMessage=f"Error: no such Book with id {book_id}"), 404
 
     if new_price < 0:
+        books_logger.error("Error: Can't update Book price to be negative", extra={'request_number': g.request_number})
         return jsonify(errorMessage="Error: Can't update Book price to be negative"), 409
 
     books_logger.info(f"Update Book id [{book_id}] price to {new_price}", extra={'request_number': g.request_number})
     books_logger.debug(f"Book [{book['title']}] price change: {book['price']} --> {new_price}"
                        , extra={'request_number': g.request_number})
-    old_Price = book['price']
+    old_price = book['price']
     book['price'] = new_price
     save_books(books)  # Save the updated list to the file
 
-    return jsonify(result=old_Price), 200
+    return jsonify(result=old_price), 200
 
 @app.route('/book', methods=['DELETE'])
 def delete_book():
@@ -259,6 +270,7 @@ def delete_book():
 
     book = next((book for book in books if book['id'] == book_id), None)
     if book is None:
+        books_logger.error(f"Error: no such Book with id {book_id}",extra={'request_number': g.request_number})
         return jsonify(errorMessage=f"Error: no such Book with id {book_id}"), 404
 
     books_logger.info(f"Removing book [{book['title']}]", extra={'request_number': g.request_number})
@@ -276,6 +288,7 @@ def get_logger_level():
     logger_name = request.args.get('logger-name')
     logger = logging.getLogger(logger_name)
     if logger is None:
+        books_logger.error(f"Logger {logger_name} not found", extra={'request_number': g.request_number})
         return jsonify(errorMessage=f"Logger {logger_name} not found"), 404
     level_name = logging.getLevelName(logger.level)
     return level_name, 200
@@ -287,12 +300,15 @@ def set_logger_level():
     level_name = request.args.get('logger-level')
     logger = logging.getLogger(logger_name)
     if logger is None:
+        books_logger.error(f"Logger {logger_name} not found", extra={'request_number': g.request_number})
         return jsonify(errorMessage=f"Logger {logger_name} not found"), 404
     level = getattr(logging, level_name.upper(), None)
     if not isinstance(level, int):
+        books_logger.error(f"Invalid log level: {level_name}", extra={'request_number': g.request_number})
         return jsonify(errorMessage=f"Invalid log level: {level_name}"), 400
     logger.setLevel(level)
     return level_name.upper(), 200
+
 
 if __name__ == '__main__':
     app.run(port=8574)
